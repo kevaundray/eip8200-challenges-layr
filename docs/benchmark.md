@@ -5,11 +5,15 @@ scored tracks on a shared branch:
 
 | track | editable path | score |
 | --- | --- | --- |
-| `modexp` | `Challenge/Modexp/Submission` | gas over 44 vectors |
+| `modexp` | `Challenge/Modexp/Submission` | aggregate precompile multiple over 44 vectors |
 | `ripemd160` | `Challenge/Ripemd160/Submission` | clean-state gas over 49 vectors |
 
 Lower is better in every track. The editable paths are deliberately disjoint,
 so Yukon can promote one track without replacing a sibling track's solution.
+
+The MODEXP score is `floor(total candidate gas × 10 / total Osaka precompile
+gas)`. Ten score units equal one aggregate precompile multiple. This scale does
+not change the ranking because the precompile total is the same for each entry.
 
 ## Selecting a track
 

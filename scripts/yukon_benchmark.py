@@ -28,6 +28,8 @@ TRACKS = {
     "ripemd160": Track("Ripemd160", "RIPEMD-160", 49, True),
 }
 
+MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE = 10
+
 
 def track_config(name: str) -> Track:
     try:
@@ -191,10 +193,15 @@ def parse_modexp_csv(path: Path, expected_count: int) -> tuple[int, dict[str, ob
     if len(rows) != expected_count:
         raise ValueError(f"expected {expected_count} vectors, got {len(rows)}")
     total = sum(gas for gas, _ in rows.values())
-    return total, {
+    precompile_total = sum(precompile for _, precompile in rows.values())
+    if precompile_total == 0:
+        raise ValueError("zero total precompile gas")
+    score = total * MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE // precompile_total
+    return score, {
         "vectors": len(rows),
         "totalGas": total,
-        "precompileTotalGas": sum(precompile for _, precompile in rows.values()),
+        "precompileTotalGas": precompile_total,
+        "scoreUnitsPerPrecompileMultiple": MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE,
     }
 
 
@@ -225,9 +232,18 @@ def write_score(
         json.dumps({"score": score, "metrics": metrics}, indent=2) + "\n",
     )
 
+    if track_name == "modexp":
+        multiple, tenths = divmod(score, MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE)
+        score_summary = (
+            f"- Verified score: **{score:,}**\n"
+            f"- Aggregate precompile multiple: **{multiple:,}.{tenths}×**\n"
+        )
+    else:
+        score_summary = f"- Verified gas score: **{score:,}**\n"
+
     summary = (
         f"## EIP-8200 {track.display_name} benchmark\n\n"
-        f"- Verified gas score: **{score:,}**\n"
+        f"{score_summary}"
         f"- Bytecode size: **{len(artifact) // 2:,} bytes**\n"
         f"- Correctness vectors: **{track.vector_count}/{track.vector_count}**\n"
         "- Lean Comparator: **accepted**\n"

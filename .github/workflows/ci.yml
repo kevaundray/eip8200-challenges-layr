@@ -332,6 +332,10 @@ jobs:
           scripts/report-${{ matrix.slug }}-gas.sh --self-test
           scripts/check-${{ matrix.slug }}-gas-report.sh
 
+      - name: Test MODEXP score parser
+        if: matrix.slug == 'modexp'
+        run: python3 -m unittest scripts/test_yukon_benchmark.py
+
       - name: Run ${{ matrix.name }} scorer controls
         run: |
           case "${{ matrix.slug }}" in
