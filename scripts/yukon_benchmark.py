@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 import json
+from math import isqrt
 import os
 from pathlib import Path
 import re
@@ -191,7 +192,28 @@ def parse_modexp_csv(path: Path, expected_count: int) -> tuple[int, dict[str, ob
     if len(rows) != expected_count:
         raise ValueError(f"expected {expected_count} vectors, got {len(rows)}")
     total = sum(gas for gas, _ in rows.values())
-    return total, {
+    buckets = {"256-bit": [0, 0], "RSA": [0, 0], "general": [0, 0]}
+    for label, (gas, precompile) in rows.items():
+        if label == "BN254 modular inversion" or label.startswith("generated 256-bit "):
+            bucket = "256-bit"
+        elif label.startswith("generated RSA-"):
+            bucket = "RSA"
+        else:
+            bucket = "general"
+        buckets[bucket][0] += gas
+        buckets[bucket][1] += precompile
+    for bucket, (_, precompile) in buckets.items():
+        if precompile == 0:
+            raise ValueError(f"zero precompile gas for MODEXP bucket: {bucket}")
+    gas256, precompile256 = buckets["256-bit"]
+    gas_rsa, precompile_rsa = buckets["RSA"]
+    gas_general, precompile_general = buckets["general"]
+    scaled_fourth_power = (
+        1_000**4 * gas256**2 * gas_rsa * gas_general
+        // (precompile256**2 * precompile_rsa * precompile_general)
+    )
+    score = isqrt(isqrt(scaled_fourth_power))
+    return score, {
         "vectors": len(rows),
         "totalGas": total,
         "precompileTotalGas": sum(precompile for _, precompile in rows.values()),
