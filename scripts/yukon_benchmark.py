@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 import json
+from math import isqrt
 import os
 from pathlib import Path
 import re
@@ -128,6 +129,7 @@ def parse_framed_csv(
 ) -> tuple[int, dict[str, object]]:
     clean: dict[str, int] = {}
     dirty: dict[str, int] = {}
+    clean_sizes: dict[str, int] = {}
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         expected_fields = expected_fields or ["vector", "bytes", "frame", "status", "gas"]
@@ -141,9 +143,10 @@ def parse_framed_csv(
                 raise ValueError(f"scorer rejected {label}/{frame}: {status}")
             try:
                 gas = int(row["gas"])
+                byte_count = int(row["bytes"])
             except (TypeError, ValueError) as error:
                 raise ValueError(f"invalid gas for {label}/{frame}: {row['gas']}") from error
-            if gas < 0:
+            if gas < 0 or byte_count < 0:
                 raise ValueError(f"negative gas for {label}/{frame}")
             target = clean if frame == "clean" else dirty if frame == "dirty" else None
             if target is None:
@@ -151,6 +154,8 @@ def parse_framed_csv(
             if label in target:
                 raise ValueError(f"duplicate scorer row: {label}/{frame}")
             target[label] = gas
+            if target is clean:
+                clean_sizes[label] = byte_count
 
     if len(clean) != expected_count or clean.keys() != dirty.keys():
         raise ValueError(
@@ -159,10 +164,12 @@ def parse_framed_csv(
         )
     clean_total = sum(clean.values())
     dirty_total = sum(dirty.values())
-    return clean_total, {
+    precompile_total = sum(600 + 120 * ((size + 31) // 32) for size in clean_sizes.values())
+    return clean_total * 1_000 // precompile_total, {
         "vectors": len(clean),
         "cleanTotalGas": clean_total,
         "dirtyTotalGas": dirty_total,
+        "precompileTotalGas": precompile_total,
         "stateIndependentGas": clean_total == dirty_total,
     }
 
@@ -191,7 +198,28 @@ def parse_modexp_csv(path: Path, expected_count: int) -> tuple[int, dict[str, ob
     if len(rows) != expected_count:
         raise ValueError(f"expected {expected_count} vectors, got {len(rows)}")
     total = sum(gas for gas, _ in rows.values())
-    return total, {
+    buckets = {"256-bit": [0, 0], "RSA": [0, 0], "general": [0, 0]}
+    for label, (gas, precompile) in rows.items():
+        if label == "BN254 modular inversion" or label.startswith("generated 256-bit "):
+            bucket = "256-bit"
+        elif label.startswith("generated RSA-"):
+            bucket = "RSA"
+        else:
+            bucket = "general"
+        buckets[bucket][0] += gas
+        buckets[bucket][1] += precompile
+    for bucket, (_, precompile) in buckets.items():
+        if precompile == 0:
+            raise ValueError(f"zero precompile gas for MODEXP bucket: {bucket}")
+    gas256, precompile256 = buckets["256-bit"]
+    gas_rsa, precompile_rsa = buckets["RSA"]
+    gas_general, precompile_general = buckets["general"]
+    scaled_fourth_power = (
+        1_000**4 * gas256**2 * gas_rsa * gas_general
+        // (precompile256**2 * precompile_rsa * precompile_general)
+    )
+    score = isqrt(isqrt(scaled_fourth_power))
+    return score, {
         "vectors": len(rows),
         "totalGas": total,
         "precompileTotalGas": sum(precompile for _, precompile in rows.values()),
@@ -225,9 +253,10 @@ def write_score(
         json.dumps({"score": score, "metrics": metrics}, indent=2) + "\n",
     )
 
+    score_name = "overhead index"
     summary = (
         f"## EIP-8200 {track.display_name} benchmark\n\n"
-        f"- Verified gas score: **{score:,}**\n"
+        f"- Verified {score_name}: **{score:,}**\n"
         f"- Bytecode size: **{len(artifact) // 2:,} bytes**\n"
         f"- Correctness vectors: **{track.vector_count}/{track.vector_count}**\n"
         "- Lean Comparator: **accepted**\n"
