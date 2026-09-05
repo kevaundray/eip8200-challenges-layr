@@ -247,9 +247,10 @@ def write_score(
         json.dumps({"score": score, "metrics": metrics}, indent=2) + "\n",
     )
 
+    score_name = "overhead index" if track_name == "modexp" else "gas score"
     summary = (
         f"## EIP-8200 {track.display_name} benchmark\n\n"
-        f"- Verified gas score: **{score:,}**\n"
+        f"- Verified {score_name}: **{score:,}**\n"
         f"- Bytecode size: **{len(artifact) // 2:,} bytes**\n"
         f"- Correctness vectors: **{track.vector_count}/{track.vector_count}**\n"
         "- Lean Comparator: **accepted**\n"
