@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 import json
+from math import isqrt
 import os
 from pathlib import Path
 import re
@@ -27,6 +28,25 @@ TRACKS = {
     "modexp": Track("Modexp", "MODEXP", 44, False),
     "ripemd160": Track("Ripemd160", "RIPEMD-160", 49, True),
 }
+
+SCORE_UNITS_PER_PRECOMPILE_MULTIPLE = 1_000
+MODEXP_BUCKET_WEIGHTS = {
+    "256-bit": 2,
+    "RSA": 1,
+    "general": 1,
+}
+
+
+def modexp_bucket(label: str) -> str:
+    if label == "BN254 modular inversion" or label.startswith("generated 256-bit "):
+        return "256-bit"
+    if label.startswith("generated RSA-"):
+        return "RSA"
+    return "general"
+
+
+def integer_fourth_root(value: int) -> int:
+    return isqrt(isqrt(value))
 
 
 def track_config(name: str) -> Track:
@@ -128,6 +148,8 @@ def parse_framed_csv(
 ) -> tuple[int, dict[str, object]]:
     clean: dict[str, int] = {}
     dirty: dict[str, int] = {}
+    clean_sizes: dict[str, int] = {}
+    dirty_sizes: dict[str, int] = {}
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         expected_fields = expected_fields or ["vector", "bytes", "frame", "status", "gas"]
@@ -141,16 +163,23 @@ def parse_framed_csv(
                 raise ValueError(f"scorer rejected {label}/{frame}: {status}")
             try:
                 gas = int(row["gas"])
+                byte_count = int(row["bytes"])
             except (TypeError, ValueError) as error:
-                raise ValueError(f"invalid gas for {label}/{frame}: {row['gas']}") from error
-            if gas < 0:
-                raise ValueError(f"negative gas for {label}/{frame}")
-            target = clean if frame == "clean" else dirty if frame == "dirty" else None
-            if target is None:
+                raise ValueError(f"invalid gas or byte count for {label}/{frame}") from error
+            if gas < 0 or byte_count < 0:
+                raise ValueError(f"negative gas or byte count for {label}/{frame}")
+            if frame == "clean":
+                target = clean
+                size_target = clean_sizes
+            elif frame == "dirty":
+                target = dirty
+                size_target = dirty_sizes
+            else:
                 raise ValueError(f"unexpected scorer frame: {frame}")
             if label in target:
                 raise ValueError(f"duplicate scorer row: {label}/{frame}")
             target[label] = gas
+            size_target[label] = byte_count
 
     if len(clean) != expected_count or clean.keys() != dirty.keys():
         raise ValueError(
@@ -159,10 +188,21 @@ def parse_framed_csv(
         )
     clean_total = sum(clean.values())
     dirty_total = sum(dirty.values())
-    return clean_total, {
+    for label, byte_count in clean_sizes.items():
+        if dirty_sizes[label] != byte_count:
+            raise ValueError(f"input size differs between frames for {label}")
+    precompile_total = sum(
+        600 + 120 * ((byte_count + 31) // 32)
+        for byte_count in clean_sizes.values()
+    )
+    score = clean_total * SCORE_UNITS_PER_PRECOMPILE_MULTIPLE // precompile_total
+    return score, {
         "vectors": len(clean),
         "cleanTotalGas": clean_total,
         "dirtyTotalGas": dirty_total,
+        "precompileTotalGas": precompile_total,
+        "scoreUnitsPerPrecompileMultiple": SCORE_UNITS_PER_PRECOMPILE_MULTIPLE,
+        "aggregation": "suiteRatio",
         "stateIndependentGas": clean_total == dirty_total,
     }
 
@@ -191,10 +231,44 @@ def parse_modexp_csv(path: Path, expected_count: int) -> tuple[int, dict[str, ob
     if len(rows) != expected_count:
         raise ValueError(f"expected {expected_count} vectors, got {len(rows)}")
     total = sum(gas for gas, _ in rows.values())
-    return total, {
+    precompile_total = sum(precompile for _, precompile in rows.values())
+    buckets: dict[str, dict[str, int]] = {}
+    weighted_ratio_numerator = 1
+    weighted_ratio_denominator = 1
+    total_weight = sum(MODEXP_BUCKET_WEIGHTS.values())
+    for bucket, weight in MODEXP_BUCKET_WEIGHTS.items():
+        bucket_rows = [
+            values for label, values in rows.items() if modexp_bucket(label) == bucket
+        ]
+        if not bucket_rows:
+            raise ValueError(f"missing MODEXP bucket: {bucket}")
+        bucket_total = sum(gas for gas, _ in bucket_rows)
+        bucket_precompile_total = sum(precompile for _, precompile in bucket_rows)
+        if bucket_precompile_total == 0:
+            raise ValueError(f"zero precompile gas for MODEXP bucket: {bucket}")
+        weighted_ratio_numerator *= bucket_total**weight
+        weighted_ratio_denominator *= bucket_precompile_total**weight
+        buckets[bucket] = {
+            "weightPercent": 100 * weight // total_weight,
+            "vectors": len(bucket_rows),
+            "totalGas": bucket_total,
+            "precompileTotalGas": bucket_precompile_total,
+        }
+    if total_weight != 4:
+        raise ValueError(f"MODEXP bucket weights must sum to 4, got {total_weight}")
+    scaled_ratio_power = (
+        weighted_ratio_numerator
+        * SCORE_UNITS_PER_PRECOMPILE_MULTIPLE**total_weight
+        // weighted_ratio_denominator
+    )
+    score = integer_fourth_root(scaled_ratio_power)
+    return score, {
         "vectors": len(rows),
         "totalGas": total,
-        "precompileTotalGas": sum(precompile for _, precompile in rows.values()),
+        "precompileTotalGas": precompile_total,
+        "scoreUnitsPerPrecompileMultiple": SCORE_UNITS_PER_PRECOMPILE_MULTIPLE,
+        "aggregation": "weightedGeometricMean",
+        "buckets": buckets,
     }
 
 
@@ -225,9 +299,20 @@ def write_score(
         json.dumps({"score": score, "metrics": metrics}, indent=2) + "\n",
     )
 
+    multiple, fraction = divmod(score, SCORE_UNITS_PER_PRECOMPILE_MULTIPLE)
+    multiple_name = (
+        "Weighted precompile multiple"
+        if track_name == "modexp"
+        else "Precompile multiple"
+    )
+    score_summary = (
+        f"- Verified overhead index: **{score:,}**\n"
+        f"- {multiple_name}: **{multiple:,}.{fraction:03d}×**\n"
+    )
+
     summary = (
         f"## EIP-8200 {track.display_name} benchmark\n\n"
-        f"- Verified gas score: **{score:,}**\n"
+        f"{score_summary}"
         f"- Bytecode size: **{len(artifact) // 2:,} bytes**\n"
         f"- Correctness vectors: **{track.vector_count}/{track.vector_count}**\n"
         "- Lean Comparator: **accepted**\n"
