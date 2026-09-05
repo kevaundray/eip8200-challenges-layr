@@ -5,7 +5,7 @@ scored tracks on a shared branch:
 
 | track | editable path | score |
 | --- | --- | --- |
-| `modexp` | `Challenge/Modexp/Submission` | weighted precompile multiple over 44 vectors |
+| `modexp` | `Challenge/Modexp/Submission` | weighted geometric precompile multiple over 44 vectors |
 | `ripemd160` | `Challenge/Ripemd160/Submission` | clean-state gas over 49 vectors |
 
 Lower is better in every track. The editable paths are deliberately disjoint,
@@ -15,12 +15,15 @@ The MODEXP score uses three buckets. The 256-bit bucket has 50% of the score.
 The RSA bucket and the general bucket each have 25%.
 
 For each bucket, the scorer divides the total candidate gas by the total Osaka
-precompile gas. It calculates the weighted mean of these three ratios. Ten score
-units equal one weighted precompile multiple.
+precompile gas. It calculates the weighted geometric mean of these ratios. One
+thousand score units equal one weighted precompile multiple.
 
-The exact formula is
-`floor(10 × (0.50 × G256/P256 + 0.25 × GRSA/PRSA + 0.25 × Ggeneral/Pgeneral))`.
-In this formula, `G` is candidate gas and `P` is precompile gas.
+For each bucket, `R = G/P`. In this ratio, `G` is candidate gas and `P` is
+precompile gas. The exact score is
+`floor(1000 × fourth_root(R256² × RRSA × Rgeneral))`.
+
+A 10% reduction in the 256-bit ratio reduces the score by approximately 5.1%.
+The same reduction in either other ratio reduces the score by approximately 2.6%.
 
 The 256-bit bucket contains the generated 256-bit vectors and BN254 inversion.
 The RSA bucket contains the generated RSA-1024 and RSA-2048 vectors. The general

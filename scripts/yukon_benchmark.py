@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from fractions import Fraction
 import json
+from math import isqrt
 import os
 from pathlib import Path
 import re
@@ -29,7 +29,7 @@ TRACKS = {
     "ripemd160": Track("Ripemd160", "RIPEMD-160", 49, True),
 }
 
-MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE = 10
+MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE = 1_000
 MODEXP_BUCKET_WEIGHTS = {
     "256-bit": 2,
     "RSA": 1,
@@ -43,6 +43,10 @@ def modexp_bucket(label: str) -> str:
     if label.startswith("generated RSA-"):
         return "RSA"
     return "general"
+
+
+def integer_fourth_root(value: int) -> int:
+    return isqrt(isqrt(value))
 
 
 def track_config(name: str) -> Track:
@@ -209,7 +213,8 @@ def parse_modexp_csv(path: Path, expected_count: int) -> tuple[int, dict[str, ob
     total = sum(gas for gas, _ in rows.values())
     precompile_total = sum(precompile for _, precompile in rows.values())
     buckets: dict[str, dict[str, int]] = {}
-    weighted_multiple = Fraction()
+    weighted_ratio_numerator = 1
+    weighted_ratio_denominator = 1
     total_weight = sum(MODEXP_BUCKET_WEIGHTS.values())
     for bucket, weight in MODEXP_BUCKET_WEIGHTS.items():
         bucket_rows = [
@@ -221,21 +226,28 @@ def parse_modexp_csv(path: Path, expected_count: int) -> tuple[int, dict[str, ob
         bucket_precompile_total = sum(precompile for _, precompile in bucket_rows)
         if bucket_precompile_total == 0:
             raise ValueError(f"zero precompile gas for MODEXP bucket: {bucket}")
-        weighted_multiple += Fraction(bucket_total * weight, bucket_precompile_total)
+        weighted_ratio_numerator *= bucket_total**weight
+        weighted_ratio_denominator *= bucket_precompile_total**weight
         buckets[bucket] = {
             "weightPercent": 100 * weight // total_weight,
             "vectors": len(bucket_rows),
             "totalGas": bucket_total,
             "precompileTotalGas": bucket_precompile_total,
         }
-    weighted_multiple /= total_weight
-    scaled_score = weighted_multiple * MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE
-    score = scaled_score.numerator // scaled_score.denominator
+    if total_weight != 4:
+        raise ValueError(f"MODEXP bucket weights must sum to 4, got {total_weight}")
+    scaled_ratio_power = (
+        weighted_ratio_numerator
+        * MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE**total_weight
+        // weighted_ratio_denominator
+    )
+    score = integer_fourth_root(scaled_ratio_power)
     return score, {
         "vectors": len(rows),
         "totalGas": total,
         "precompileTotalGas": precompile_total,
         "scoreUnitsPerPrecompileMultiple": MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE,
+        "aggregation": "weightedGeometricMean",
         "buckets": buckets,
     }
 
@@ -268,10 +280,12 @@ def write_score(
     )
 
     if track_name == "modexp":
-        multiple, tenths = divmod(score, MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE)
+        multiple, fraction = divmod(
+            score, MODEXP_SCORE_UNITS_PER_PRECOMPILE_MULTIPLE
+        )
         score_summary = (
             f"- Verified score: **{score:,}**\n"
-            f"- Weighted precompile multiple: **{multiple:,}.{tenths}×**\n"
+            f"- Weighted precompile multiple: **{multiple:,}.{fraction:03d}×**\n"
         )
     else:
         score_summary = f"- Verified gas score: **{score:,}**\n"

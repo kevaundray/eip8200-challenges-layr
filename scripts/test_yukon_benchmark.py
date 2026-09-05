@@ -17,6 +17,13 @@ SPEC.loader.exec_module(yukon_benchmark)
 
 
 class ParseModexpCsvTests(unittest.TestCase):
+    def write_text(self, contents: str) -> Path:
+        temporary = tempfile.NamedTemporaryFile(mode="w", delete=False)
+        self.addCleanup(Path(temporary.name).unlink, missing_ok=True)
+        with temporary:
+            temporary.write(contents)
+        return Path(temporary.name)
+
     def write_csv(self, rows: list[tuple[str, int, int]]) -> Path:
         temporary = tempfile.NamedTemporaryFile(mode="w", newline="", delete=False)
         self.addCleanup(Path(temporary.name).unlink, missing_ok=True)
@@ -27,43 +34,43 @@ class ParseModexpCsvTests(unittest.TestCase):
                 writer.writerow([label, 1, "ok", gas, precompile])
         return Path(temporary.name)
 
-    def test_score_uses_50_25_25_bucket_weights(self) -> None:
+    def test_score_uses_50_25_25_geometric_weights(self) -> None:
         score, metrics = yukon_benchmark.parse_modexp_csv(
             self.write_csv(
                 [
-                    ("generated 256-bit #02 full exponent", 100, 50),
-                    ("BN254 modular inversion", 100, 50),
-                    ("generated RSA-1024 #01 e=3", 800, 200),
-                    ("EIP-198 example 1", 600, 300),
+                    ("generated 256-bit #02 full exponent", 200, 50),
+                    ("BN254 modular inversion", 200, 50),
+                    ("generated RSA-1024 #01 e=3", 1_600, 100),
+                    ("EIP-198 example 1", 8_100, 100),
                 ]
             ),
             4,
         )
 
-        self.assertEqual(score, 25)
-        self.assertEqual(metrics["totalGas"], 1_600)
-        self.assertEqual(metrics["precompileTotalGas"], 600)
-        self.assertEqual(metrics["scoreUnitsPerPrecompileMultiple"], 10)
+        self.assertEqual(score, 12_000)
+        self.assertEqual(metrics["totalGas"], 10_100)
+        self.assertEqual(metrics["precompileTotalGas"], 300)
+        self.assertEqual(metrics["scoreUnitsPerPrecompileMultiple"], 1_000)
         self.assertEqual(
             metrics["buckets"],
             {
                 "256-bit": {
                     "weightPercent": 50,
                     "vectors": 2,
-                    "totalGas": 200,
+                    "totalGas": 400,
                     "precompileTotalGas": 100,
                 },
                 "RSA": {
                     "weightPercent": 25,
                     "vectors": 1,
-                    "totalGas": 800,
-                    "precompileTotalGas": 200,
+                    "totalGas": 1_600,
+                    "precompileTotalGas": 100,
                 },
                 "general": {
                     "weightPercent": 25,
                     "vectors": 1,
-                    "totalGas": 600,
-                    "precompileTotalGas": 300,
+                    "totalGas": 8_100,
+                    "precompileTotalGas": 100,
                 },
             },
         )
@@ -107,9 +114,37 @@ class ParseModexpCsvTests(unittest.TestCase):
             3,
         )
 
-        self.assertEqual(score, 75_423)
+        self.assertEqual(score, 73_109)
         self.assertEqual(metrics["totalGas"], 1_313_215_999)
         self.assertEqual(metrics["precompileTotalGas"], 188_756)
+
+    def test_summary_formats_thousandths_of_a_precompile_multiple(self) -> None:
+        original_track = yukon_benchmark.TRACKS["modexp"]
+        self.addCleanup(yukon_benchmark.TRACKS.__setitem__, "modexp", original_track)
+        yukon_benchmark.TRACKS["modexp"] = yukon_benchmark.Track(
+            "Modexp", "MODEXP", 4, False
+        )
+        summary_path = self.write_text("")
+
+        yukon_benchmark.write_score(
+            "modexp",
+            self.write_text("00\n"),
+            self.write_csv(
+                [
+                    ("generated 256-bit #02 full exponent", 200, 50),
+                    ("BN254 modular inversion", 200, 50),
+                    ("generated RSA-1024 #01 e=3", 1_600, 100),
+                    ("EIP-198 example 1", 8_100, 100),
+                ]
+            ),
+            self.write_text(""),
+            summary_path,
+        )
+
+        self.assertIn(
+            "- Weighted precompile multiple: **12.000×**",
+            summary_path.read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":
