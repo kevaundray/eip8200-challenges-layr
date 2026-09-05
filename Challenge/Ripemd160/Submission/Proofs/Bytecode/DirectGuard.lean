@@ -43,16 +43,16 @@ def checkEntryPath : List Located :=
   [pushAt 2819 0 0, opAt 2820 .CALLDATALOAD,
    opAt 2821 (.Dup ⟨0, by decide⟩),
    pushAt 2822 32 KnownInputData.fullWord, opAt 2823 .XOR,
-   pushAt 2824 2 4929, opAt 2825 .JUMPI,
+   pushAt 2824 2 4928, opAt 2825 .JUMPI,
    pushAt 2826 0 0, pushAt 2827 1 32]
 
 def checkEarlyPath : List Located :=
   [pushAt 2819 0 0, opAt 2820 .CALLDATALOAD,
    opAt 2821 (.Dup ⟨0, by decide⟩),
    pushAt 2822 32 KnownInputData.fullWord, opAt 2823 .XOR,
-   pushAt 2824 2 4929, opAt 2825 .JUMPI,
-   opAt 2860 .JUMPDEST, opAt 2861 .POP,
-   pushAt 2862 2 1006, opAt 2863 .JUMP]
+   pushAt 2824 2 4928, opAt 2825 .JUMPI,
+   opAt 2859 .JUMPDEST, opAt 2860 .POP,
+   pushAt 2861 2 1006, opAt 2862 .JUMP]
 
 def loopPath : List Located :=
   [opAt 2828 .JUMPDEST, opAt 2829 (.Swap ⟨0, by decide⟩),
@@ -65,13 +65,14 @@ def loopPath : List Located :=
 def tailPath : List Located :=
   [opAt 2843 .CALLDATALOAD, opAt 2844 (.Dup ⟨2, by decide⟩),
    opAt 2845 .XOR, pushAt 2846 1 192, opAt 2847 .SHR, opAt 2848 .OR,
-   opAt 2849 .JUMPDEST, opAt 2850 (.Swap ⟨0, by decide⟩), opAt 2851 .POP,
-   pushAt 2852 2 1006, opAt 2853 .JUMPI]
+   opAt 2849 (.Swap ⟨0, by decide⟩), opAt 2850 .POP,
+   pushAt 2851 2 1006, opAt 2852 .JUMPI]
 
 def returnPath : List Located :=
-  [pushAt 2854 20 972889429405991776604892044862621566948497025487,
-   pushAt 2855 0 0, opAt 2856 .MSTORE, pushAt 2857 1 32,
-   pushAt 2858 0 0, opAt 2859 .RETURN]
+  [pushAt 2853 20 972889429405991776604892044862621566948497025487,
+   pushAt 2854 0 0, opAt 2855 .MSTORE, pushAt 2856 1 32,
+   pushAt 2857 0 0, opAt 2858 .RETURN]
+
 
 def atPC (input : ByteArray) (pc : Nat) : State :=
   { initialState submissionBytecode input 0 with pc := UInt256.ofNat pc }
@@ -89,7 +90,7 @@ def loopExitState (input : ByteArray) : State :=
     pc := UInt256.ofNat 0x1318
     stack := [UInt256.ofNat 992, loopAcc input 30, referenceWord input] }
 
-def returnEntry (input : ByteArray) : State := atPC input 0x1326
+def returnEntry (input : ByteArray) : State := atPC input 0x1325
 
 def storeWord (memory : ByteArray) (address : Nat) (word : UInt256) : ByteArray :=
   MachineState.writeBytes memory (Data.Bytes.natToBytesPadded word.toNat 32) address
@@ -99,7 +100,7 @@ def answerMemory : ByteArray :=
 
 def returnedState (input : ByteArray) : State :=
   { initialState submissionBytecode input 0 with
-    pc := UInt256.ofNat 0x1340
+    pc := UInt256.ofNat 0x133f
     memory := answerMemory
     activeWords := UInt256.ofNat 1
     halt := .Returned
@@ -189,17 +190,17 @@ private abbrev run := Challenge.EvmProof.Stepper.runLocatedBlock
 @[simp] private theorem pc2851 :
     Artifact.submissionArtifact.instructionPC 2851 = 4897 := by rfl
 @[simp] private theorem pc2852 :
-    Artifact.submissionArtifact.instructionPC 2852 = 4898 := by rfl
+    Artifact.submissionArtifact.instructionPC 2852 = 4900 := by rfl
 @[simp] private theorem pc2853 :
     Artifact.submissionArtifact.instructionPC 2853 = 4901 := by rfl
 @[simp] private theorem pc2854 :
-    Artifact.submissionArtifact.instructionPC 2854 = 4902 := by rfl
+    Artifact.submissionArtifact.instructionPC 2854 = 4922 := by rfl
 @[simp] private theorem pc2855 :
     Artifact.submissionArtifact.instructionPC 2855 = 4923 := by rfl
 @[simp] private theorem pc2856 :
     Artifact.submissionArtifact.instructionPC 2856 = 4924 := by rfl
 @[simp] private theorem pc2857 :
-    Artifact.submissionArtifact.instructionPC 2857 = 4925 := by rfl
+    Artifact.submissionArtifact.instructionPC 2857 = 4926 := by rfl
 @[simp] private theorem pc2858 :
     Artifact.submissionArtifact.instructionPC 2858 = 4927 := by rfl
 @[simp] private theorem pc2859 :
@@ -209,9 +210,7 @@ private abbrev run := Challenge.EvmProof.Stepper.runLocatedBlock
 @[simp] private theorem pc2861 :
     Artifact.submissionArtifact.instructionPC 2861 = 4930 := by rfl
 @[simp] private theorem pc2862 :
-    Artifact.submissionArtifact.instructionPC 2862 = 4931 := by rfl
-@[simp] private theorem pc2863 :
-    Artifact.submissionArtifact.instructionPC 2863 = 4934 := by rfl
+    Artifact.submissionArtifact.instructionPC 2862 = 4933 := by rfl
 
 theorem run_size_fail (input : ByteArray) (hfit : CalldataFits input)
     (hsize : input.size ≠ 1000) :
@@ -321,8 +320,8 @@ theorem run_checkEarly (input : ByteArray)
   have hcond : UInt256.isTrue
       (UInt256.xor KnownInputData.fullWord (MachineState.readWord input 0)) := by
     simpa only [referenceWord] using htrue
-  have hcleanup : Decode.isValidJumpDest submissionBytecode 0x1341 = true :=
-    Artifact.submissionArtifact.isValidJumpDest_index 2860 (by rfl)
+  have hcleanup : Decode.isValidJumpDest submissionBytecode 0x1340 = true :=
+    Artifact.submissionArtifact.isValidJumpDest_index 2859 (by rfl)
   have hfallback : Decode.isValidJumpDest submissionBytecode 0x3ee = true :=
     Artifact.submissionArtifact.isValidJumpDest_index 682 (by rfl)
   simp (config := { maxSteps := 1000000 })
